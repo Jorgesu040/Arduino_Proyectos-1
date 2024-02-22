@@ -1,4 +1,13 @@
 int velocidades = 0;
+
+int botonSubir = 0, botonSubirPrevio = 0;
+int botonBajar = 0, botonBajarPrevio = 0;
+
+int vActual = 0;
+
+unsigned long int desfase = 0;
+unsigned long int debouncing = 0;
+
 void setup()
 {
   Serial.begin(9600);
@@ -23,12 +32,6 @@ void setup()
   Serial.println(velocidades);
 }
 
-int botonSubir = 0, botonSubirPrevio = 0;
-int botonBajar = 0, botonBajarPrevio = 0;
-
-int vActual = 0;
-
-unsigned long int desfase = 0;
 
 void loop() {
 
@@ -36,10 +39,8 @@ void loop() {
   botonSubir = digitalRead(5);
 
 
-  if (millis() - desfase < 2000){
+  if (millis() - desfase > 20){
     
-    Serial.print(botonBajar);
-  Serial.println(botonSubir);
 
     if(botonSubir == LOW && botonSubirPrevio == HIGH) {
 
@@ -50,8 +51,8 @@ void loop() {
       Serial.print("Velocidad actual: ");
       Serial.println(vActual);
       setVelocidad(vActual, velocidades);
-      desfase = millis();
     }
+
 
     if(botonBajar == LOW && botonBajarPrevio == HIGH) {
 
@@ -62,8 +63,9 @@ void loop() {
       Serial.print("Velocidad actual: ");
       Serial.println(vActual);
       setVelocidad(vActual, velocidades);
-      desfase = millis(); 
     }
+
+    desfase = millis();
 
     botonSubirPrevio = botonSubir; // Update previous state
     botonBajarPrevio = botonBajar; // Update previous state
@@ -72,7 +74,7 @@ void loop() {
 
 // Funcion que calcula el envio de la señal PWM por el pin 11 en funcion de la velocidad seleccionada
 void setVelocidad(int vActual, int velocidades){
-  byte dutyCycle = 0;
+  int dutyCycle = 0;
   if (vActual == 0){
     dutyCycle = 0;
   }
