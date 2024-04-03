@@ -3,7 +3,7 @@ int velocidades = 0;
 int botonSubir = 0, botonSubirPrevio = 0;
 int botonBajar = 0, botonBajarPrevio = 0;
 
-int vActual = 0;
+int    = 0;
 
 unsigned long int desfase = 0;
 unsigned long int debouncing = 0;
@@ -39,7 +39,7 @@ void loop() {
   botonSubir = digitalRead(5);
 
 
-  if (millis() - desfase > 20){
+  if (millis() - desfase > 25){
     
 
     if(botonSubir == LOW && botonSubirPrevio == HIGH) {
