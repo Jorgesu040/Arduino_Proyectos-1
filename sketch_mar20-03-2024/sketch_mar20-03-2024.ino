@@ -78,8 +78,6 @@ void loop() {
   valorBotonAnterior = valorBoton;
   delayMicroseconds(500);
 
-  
-  
 }
 
 void NUMrandom() {
