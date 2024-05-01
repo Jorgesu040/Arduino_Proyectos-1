@@ -5,13 +5,15 @@
 #define ENA_2 9  // Pin de habilitación 2A
 #define EN1_2 11   // Pin de control 1-2
 
+#define pinJoyX A0
+#define pinJoyY A1
+
 int speed = 0;         // Variable de velocidad (0-255)
 int potRead = 0;       // Variable de lectura del potenciómetro
 bool turnRight = true; // Variable para decidir la dirección de giro
 
-const int pinJoyX = A0;
-const int pinJoyY = A1;
-const int pinJoyButton = 9;
+
+const int pinJoyButton = 5;
 int Xvalue = 0;
 int Yvalue = 0;
 bool buttonValue = false;
@@ -21,13 +23,12 @@ void setup()
 {
   // put your setup code here, to run once:
   Serial.begin(9600);
-  pinMode(pinJoyButton, INPUT);
+  pinMode(pinJoyButton, INPUT_PULLUP);
   pinMode(pinJoyX, INPUT);
   pinMode(pinJoyY, INPUT);
   pinMode(ENA_1, OUTPUT);
   pinMode(ENA_2, OUTPUT);
   pinMode(EN1_2, OUTPUT);
-  pinMode(POT_PIN, INPUT);
 
   Serial.println("Modo de uso del Joystick: ejes X e Y y pulsador ");
   Serial.println("X: 0 a 1023 -> velocidad | Y: 0 a 1 -> Izq(0) o Derch(1) | Pulsador: 0 o 1");
@@ -36,7 +37,7 @@ void setup()
   Serial.println("Mover el eje X para cambiar la velocidad");
 
   Serial.println("Pulsa el boton para empezar: ");
-  while (digitalRead(pinJoyButton) == 0){
+  while (digitalRead(pinJoyButton) == 1){
     delay(100);
   }
 
@@ -57,7 +58,7 @@ void loop() {
   Serial.println(buttonValue);
   delay(1000); // Una muestra por segundo
 
-  if (buttonValue == 1){
+  if (buttonValue == 0){
     if (OsnOff == false){
       OsnOff = true;
       encender();
@@ -90,10 +91,13 @@ void encender(){
 
 void comprobarSentido(int valorY){
 
-  potRead = analogRead(pinJoyY);
+  potRead = valorY;
 
   // Decidir la dirección de giro
-  turnRight = potRead > 512;
+  const int zonaMuerta = 50; // Definir el tamaño de la zona muerta
+  if (potRead < 512 - zonaMuerta || potRead > 512 + zonaMuerta) {
+    turnRight = potRead > 512;
+  }
 
   if (turnRight) {
     digitalWrite(EN1_2, speed);
@@ -112,7 +116,7 @@ void comprobarSentido(int valorY){
 void manejarVelocidad(int valorX){
   
   // Decidir la velocidad
-  speed = map(valorX, 0, 1023, 0, 64);
+  speed = map(valorX, 20, 1023, 0, 32);
   
   // Mostrar los valores en el puerto serial
   Serial.print("Velocidad: ");
