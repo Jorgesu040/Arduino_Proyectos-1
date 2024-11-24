@@ -1,4 +1,11 @@
 /*
+Autores: Juan Sotos y Jorge Matesanz 
+Grupo: INSO1A 
+Curso: 2023/2024 - - Proyectos 1, tecnicas y tecnologias digitales
+Descripción: Proyecto final de la asignatura Proyectos 1, en el que se ha desarrollado un sistema de alarma/reloj con un ventilador inteligente.
+*/
+
+/*
 Resumen:
 Se trata de una alarma/reloj con un ventilador inteligente
 •	Tiene función de reloj configurable por el puerto serie o un joystick
@@ -70,7 +77,8 @@ struct dateTime
   int mes;
   int anio;
 };
-struct dateTime fechaHora = {23, 59, 59, 20, 12, 2024};
+// Valor por defecto de la fecha y hora por si se resetea la EEPROM
+struct dateTime fechaHora = {01, 01, 01, 01, 01, 2000};
 
 enum menu_e
 {
@@ -134,7 +142,7 @@ int alarmaActual = 0;
 
 
 /***Seccion de prototipos de funciones***/
-// Prototypes of the functions
+// Prototipos de funciones
 void leerSensores();
 void gestionarMotorPasoAPaso();
 void actualizarLCDYTiempo();
@@ -222,6 +230,32 @@ void setup()
   delay(1000);
 }
 
+
+// El loop
+void loop()
+{
+  if (haPasadoTiempoDesdeUltimaInvocacion(200, LECTURA_VALORES))
+  {
+    leerSensores();
+  }
+
+  // Leer el ultrasonidos
+  if (haPasadoTiempoDesdeUltimaInvocacion(600, 2) && !haPasadoTiempoDesdeUltimaInvocacion(200, LECTURA_VALORES) && encendidoMotor)
+  {
+    distancia = leerUltrasonidos();
+  }
+
+  if (haPasadoTiempoDesdeUltimaInvocacion(7, ID_MOTOR_PASO))
+  {
+    gestionarMotorPasoAPaso();
+  }
+
+  if (haPasadoTiempoDesdeUltimaInvocacion(500, DELAY_CONJUNTO))
+  {
+    actualizarLCDYTiempo();
+  }
+}
+
 // Funcion que llama a todas las subrutinas de lectura de sensores
 void leerSensores() {
   comoSeComportaEjeY();
@@ -267,32 +301,6 @@ void actualizarLCDYTiempo() {
     fechaHora.segundo++;
   }
 }
-
-// El loop
-void loop()
-{
-  if (haPasadoTiempoDesdeUltimaInvocacion(200, LECTURA_VALORES))
-  {
-    leerSensores();
-  }
-
-  // Leer el ultrasonidos
-  if (haPasadoTiempoDesdeUltimaInvocacion(600, 2) && !haPasadoTiempoDesdeUltimaInvocacion(200, LECTURA_VALORES) && encendidoMotor)
-  {
-    distancia = leerUltrasonidos();
-  }
-
-  if (haPasadoTiempoDesdeUltimaInvocacion(7, ID_MOTOR_PASO))
-  {
-    gestionarMotorPasoAPaso();
-  }
-
-  if (haPasadoTiempoDesdeUltimaInvocacion(500, DELAY_CONJUNTO))
-  {
-    actualizarLCDYTiempo();
-  }
-}
-
 
 /**
  * Función que se encarga de actualizar y mostrar la información en el LCD según el menú actual.
@@ -427,7 +435,7 @@ int haPasadoUnSegundo()
 }
 
 /***************** ALARMA *****************/
-// Funcion que se encarga de la activacion de la alarma, de la lectura de la hora, de guardar las alarmas en la EEPROM
+// Funcion que se encarga de la activacion de la alarma y de la lectura de la hora
 void subRutinaAlarma(bool activa){
 
   char buffer[10]; // Buffer para dar formato a la hora y los minutos
@@ -574,7 +582,7 @@ void gestionarCuentaAtrasDistancia()
   }
 }
 
-// Función que se encarga de la lectura del sensor de ultrasonidos (se le pasa el valor por referencia)
+// Función que se encarga del temporizador de apagado del ventilador
 bool haPasadoUnMinuto(unsigned long int& tiempoUltimaInvocacion)
 {
   if (millis() - tiempoUltimaInvocacion >= 60000)
@@ -582,13 +590,13 @@ bool haPasadoUnMinuto(unsigned long int& tiempoUltimaInvocacion)
     tiempoUltimaInvocacion = millis();
     return true;
   }
-  Serial.printl("Tiempo pasado hasta ahora:");
+  Serial.print("Tiempo pasado hasta ahora:");
   Serial.println(millis() - tiempoUltimaInvocacion);
   return false;
 }
 
 /***************** AJUSTES *****************/
-// Funcion que se encarga de los ajustes del reloj, de la alarma, del ventilador (sentido de giro) y del sensor de ultrasonidos
+  // Funcion que se encarga de los ajustes del reloj, de la alarma, del ventilador (sentido de giro) y del sensor de ultrasonidos
 void subRutinaAjustes(bool activa)
 {
   static int posPuntero[2] = {14, 0};
@@ -905,7 +913,7 @@ void guardarEnEEPROM() {
   fechaHora.segundo += 1;
 }
 
-// Funcion que se encarga de resetear los datos de la EEPROM
+// Funcion que se encarga de resetear los datos de la EEPROM, para actuarla hace falta modificar el código e incluirla una vez en el setup
 void resetearEEPROM()
 {
   // Restablecer los valores por defecto
