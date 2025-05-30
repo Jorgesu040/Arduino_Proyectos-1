@@ -3,6 +3,7 @@
 #include <IRremote.hpp>
 #include <Servo.h>
 #include <LowPower.h>
+#include <avr/power.h>  // Para control granular de periféricos
 
 // Definiciones de pines
 /*LCD*/
@@ -38,6 +39,12 @@
 /*Inactividad*/
 #define INACTIVITY_THRESHOLD 10000
 
+/*Protección de batería*/
+#define VOLTAGE_CHECK_INTERVAL 30000  // Verificar voltaje cada 30 segundos
+#define LOW_BATTERY_THRESHOLD 7.0     // Voltaje mínimo seguro (7V) 
+#define CRITICAL_BATTERY_THRESHOLD 6.5 // Voltaje crítico (6.5V) - shutdown automático
+#define EMERGENCY_BATTERY_THRESHOLD 6.0 // Voltaje de emergencia extrema (6.0V)
+
 // Variables globales
 Servo motor;
 int lectura = 0; // se mantine el valor de la última lectura y se inicializa apagado
@@ -49,6 +56,10 @@ volatile bool irSignalDetected = false;
 
 // Temporizador de inactividad
 unsigned long lastActivityTime = millis();
+
+// Variables para monitoreo de batería
+unsigned long lastVoltageCheck = 0;
+bool lowBatteryWarning = false;
 
 class LcdManager {
 public:
@@ -112,8 +123,117 @@ private:
 
 LcdManager myLcd(RS, EN, D4, D5, D6, D7, BACKLIGHT);
 
+// Agregar esta función para dormir durante delays
+void powerSaveDelay(unsigned long ms) {
+  unsigned long start = millis();
+  while (millis() - start < ms) {
+    LowPower.idle(SLEEP_15MS, ADC_OFF, TIMER2_OFF, TIMER1_OFF, TIMER0_OFF, SPI_OFF, USART0_OFF, TWI_OFF);
+  }
+}
+
+// Función para medir el voltaje de la batería con mayor precisión
+float readBatteryVoltage() {
+  // Habilitar ADC temporalmente si está deshabilitado
+  bool adcWasDisabled = !(ADCSRA & (1 << ADEN));
+  if (adcWasDisabled) {
+    ADCSRA |= (1 << ADEN);
+    delay(10); // Tiempo para estabilizar ADC
+  }
+  
+  // Configurar referencia interna de 1.1V
+  ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
+  delay(2); // Tiempo de estabilización
+  
+  // Realizar múltiples lecturas para mayor precisión
+  long result = 0;
+  for (int i = 0; i < 8; i++) { // 8 muestras para promedio
+    ADCSRA |= _BV(ADSC); // Iniciar conversión
+    while (bit_is_set(ADCSRA, ADSC)); // Esperar conversión
+    
+    uint8_t low = ADCL;
+    uint8_t high = ADCH;
+    result += (high << 8) | low;
+    delay(1); // Pequeña pausa entre lecturas
+  }
+  result = result / 8; // Promedio de las 8 lecturas
+  
+  // Calcular voltaje real con factor de corrección
+  // Vcc = 1.1 * 1024 / result * factor_correccion
+  float voltage = (1.1 * 1024.0) / result;
+  
+  // Factor de corrección empírico para mayor precisión (ajustar según calibración)
+  voltage = voltage * 1.0; // Puede ajustarse según mediciones reales
+  
+  // Deshabilitar ADC si estaba deshabilitado
+  if (adcWasDisabled) {
+    ADCSRA &= ~(1 << ADEN);
+  }
+  
+  return voltage;
+}
+
+// Función para verificar estado de la batería
+void checkBatteryStatus() {
+  if (millis() - lastVoltageCheck >= VOLTAGE_CHECK_INTERVAL) {
+    lastVoltageCheck = millis();
+    
+    float batteryVoltage = readBatteryVoltage();
+    
+    Serial.print("Voltaje de batería: ");
+    Serial.print(batteryVoltage);
+    Serial.println("V");
+    
+    // Verificación de emergencia extrema primero
+    if (batteryVoltage <= EMERGENCY_BATTERY_THRESHOLD) {
+      // Emergencia extrema - shutdown inmediato sin demora
+      myLcd.print("EMERGENCIA!", "Voltaje critico");
+      Serial.println("EMERGENCIA - Voltaje peligrosamente bajo - Shutdown inmediato");
+      Serial.flush();
+      
+      // Deshabilitar todos los periféricos posibles
+      myLcd.noDisplay();
+      myLcd.setBacklight(false);
+      digitalWrite(LED_BUILTIN, LOW);
+      
+      // Entrar en deep sleep permanente con BOD habilitado
+      LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_ON);
+      
+    } else if (batteryVoltage <= CRITICAL_BATTERY_THRESHOLD) {
+      // Batería crítica - apagado controlado
+      myLcd.print("BATERIA CRITICA!", "Apagando...");
+      powerSaveDelay(2000); // Reducir tiempo de espera
+      myLcd.noDisplay();
+      myLcd.setBacklight(false);
+      
+      // Entrar en deep sleep permanente hasta cambio de batería
+      Serial.println("BATERIA CRITICA - Deep sleep permanente");
+      Serial.flush();
+      LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_ON);
+      
+    } else if (batteryVoltage <= LOW_BATTERY_THRESHOLD) {
+      // Batería baja - mostrar advertencia
+      if (!lowBatteryWarning) {
+        lowBatteryWarning = true;
+        myLcd.print("BATERIA BAJA!", "Cambiar pronto");
+        powerSaveDelay(2000);
+        firstTime = true; // Forzar actualización del menú
+      }
+    } else {
+      // Batería OK - quitar advertencia si existía
+      if (lowBatteryWarning) {
+        lowBatteryWarning = false;
+        firstTime = true; // Forzar actualización del menú
+      }
+    }
+  }
+}
+
 void setup()
 {
+  // Deshabilitar periféricos innecesarios para ahorrar energía
+  power_spi_disable();     // SPI no se usa
+  power_twi_disable();     // I2C/TWI no se usa
+  //power_usart0_disable(); // No deshabilitar si usas Serial
 
   // Inicializacion de los pines
   pinMode(LED_BUILTIN, OUTPUT);
@@ -122,6 +242,8 @@ void setup()
 
   // Inicializacion del puerto serie
   Serial.begin(9600);
+  Serial.println("=== CONTROLADOR AIRE CON PROTECCION DE BATERIA ===");
+  Serial.println("Thresholds: Bajo=7.0V, Critico=6.5V, Emergencia=6.0V");
 
   // Inicializacion del LCD
   myLcd.begin();
@@ -134,12 +256,36 @@ void setup()
   // Inicializacion del servo
   motor.attach(SERVO_PIN);
   motor.write(255);
-  delay(1000);
+  powerSaveDelay(1000);
   motor.detach();
-  delay(1000);
+  powerSaveDelay(1000);
 
   myLcd.print("Controlador Aire", "Iniciado :)");
-  delay(1000);
+  powerSaveDelay(1000);
+  
+  // Verificación inicial de batería
+  Serial.println("Verificando voltaje inicial de batería...");
+  checkBatteryStatus();
+}
+
+void enterDeepSleep() {
+  // Apagar todo lo posible antes de dormir
+  myLcd.noDisplay();
+  myLcd.setBacklight(false);
+  digitalWrite(LED_BUILTIN, LOW);
+  
+  // Opcionalmente, deshabilitar ADC completamente si no se usa
+  ADCSRA &= ~(1 << ADEN);  // Deshabilitar ADC
+  
+  // Usar BOD_ON para protección de batería (importante para batería de 9V)
+  Serial.println("Entering deep sleep mode");
+  Serial.flush();
+    attachInterrupt(digitalPinToInterrupt(IR_PIN), irDetectedISR, FALLING);
+  LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_ON); // BOD_ON para protección
+  detachInterrupt(digitalPinToInterrupt(IR_PIN));
+  
+  // Rehabilitar ADC si se necesita después
+  ADCSRA |= (1 << ADEN);
 }
 
 void loop()
@@ -157,43 +303,28 @@ void loop()
     leerIR(false);
   }
 
-  if (millis() - lastActivityTime > INACTIVITY_THRESHOLD) {
-    // Turn off components before sleeping
-    myLcd.noDisplay();
-    myLcd.setBacklight(false); // Usa el método de la clase
-    
-    // Turn off the built-in LED
-    digitalWrite(LED_BUILTIN, LOW);
+  checkBatteryStatus();
 
-    // Attach the debounce ISR and enter sleep mode
-    Serial.println("Entering sleep mode");
-    Serial.flush();
-    attachInterrupt(digitalPinToInterrupt(IR_PIN), irDetectedISR, FALLING);
-    LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_ON);
-    detachInterrupt(digitalPinToInterrupt(IR_PIN));
+  if (millis() - lastActivityTime > INACTIVITY_THRESHOLD) {
+    enterDeepSleep();
     
-    // Attempt to decode the IR signal
+    // Código después de despertar
     if (irSignalDetected) {
       Serial.println("IR signal detected");
       digitalWrite(LED_BUILTIN, HIGH);
-      delay(100); // Wait for the IR signal to be fully received
+      delay(100);
       if (IrReceiver.decode() > 0) {
-        delay (100); // Wait for the IR signal to be fully received
-        // Check if the received command matches a valid command
+        delay(100);
         if (isValidCommand(IrReceiver.decodedIRData.protocol)) {
-          // Valid IR command detected, resume operation
           myLcd.display();
-          myLcd.setBacklight(luzTrasera); // Restaura el estado de luzTrasera
-          lastActivityTime = millis(); // Reset inactivity timer
+          myLcd.setBacklight(luzTrasera);
+          lastActivityTime = millis();
         } else {
-          // Invalid IR command detected, go back to sleep
-          irSignalDetected = false; // Reset the flag
+          irSignalDetected = false;
         }
-        IrReceiver.resume(); // Prepare for the next value
-      } else {
-        // No signal decoded, consider going back to sleep
+        IrReceiver.resume();
       }
-      irSignalDetected = false; // Reset the flag
+      irSignalDetected = false;
     }
   }
 }
@@ -201,7 +332,7 @@ void loop()
 void resetFunc()
 {
   digitalWrite(HARWARE_RESET, LOW);
-  delay(1000);
+  powerSaveDelay(1000);
   digitalWrite(HARWARE_RESET, HIGH);
 
 }
@@ -262,35 +393,35 @@ void manejarDispostivo(int comando)
     myLcd.print("Accion:", "ON/OFF - Aire AC");
     motor.attach(SERVO_PIN);
     motor.write(0);
-    delay(2000);
+    powerSaveDelay(2000);
     motor.write(255);
-    delay(1000);
+    powerSaveDelay(1000);
     motor.detach();
     firstTime = true;
     break;
   case 71: // Poner temporizador
   case 13:
     myLcd.print("Accion:", "Temp. de ON/OFF");
-    delay(1000);
+    powerSaveDelay(1000);
     introducirTiempo();
     firstTime = true;
     break;
   case 22:
     myLcd.print("Accion:", "ON/OFF - luz LCD");
-    delay(1000);
+    powerSaveDelay(1000);
     luzTrasera = !luzTrasera;
     myLcd.setBacklight(luzTrasera); // Usa el método de la clase
     firstTime = true;
     break;
   case RESETARD:
     myLcd.print("Reiniciando");
-    delay(1000);
+    powerSaveDelay(1000);
     resetFunc();
     Serial.println("Arduino never run to this line");
     break;
   default:
     myLcd.print("Boton no", "reconocido");
-    delay(1000);
+    powerSaveDelay(1000);
     firstTime = true;
     break;
   }
@@ -304,7 +435,7 @@ void introducirTiempo()
 
   myLcd.print("Introduce tiempo", "1-9 -> 5-45(min)");
   static int tiempo = -1;
-  delay(500);
+  powerSaveDelay(500);
 
   while (tiempo == -1)
   {
@@ -337,7 +468,7 @@ void introducirTiempo()
         tiempo = -1;
         myLcd.print("Temp. cancelado");
         lectura = 0;
-        delay(500);
+        powerSaveDelay(500);
         myLcd.print("Volviendo al", "menu principal");
         return;
       }
@@ -359,9 +490,9 @@ void introducirTiempo()
       {
         motor.attach(SERVO_PIN);
         motor.write(0);
-        delay(2000);
+        powerSaveDelay(2000);
         motor.write(255);
-        delay(1000);
+        powerSaveDelay(1000);
         motor.detach();
         myLcd.print("Temp. finalizado");
         break;
@@ -384,7 +515,7 @@ void introducirTiempo()
           tiempo = -1;
           myLcd.print("Temp. cancelado");
           lectura = 0;
-          delay(500);
+          powerSaveDelay(500);
           myLcd.print("Volviendo al", "menu principal");
           return;
         }
@@ -399,7 +530,7 @@ int mandoB(){
   int lecturaAux = 0;
   static int contador = 0;
   myLcd.print("Pulsa para", "sumar 5 minutos");
-  delay(500);
+  powerSaveDelay(500);
 
   // Lee hasta que se pulsa el boton de confirmar (SEÑAL IR 28) y envuleve el numero hasta 45 minutos
   // Una vez se llega a 45 minutos, se resetea el contador
@@ -430,7 +561,7 @@ int mandoB(){
       myLcd.printToLcd(contador);
       myLcd.printToLcd(" minutos");
     }
-    delay(500);
+    powerSaveDelay(500);
   }
 
   return contador;
