@@ -4,7 +4,6 @@
 #include <Servo.h>
 #include <LowPower.h>
 
-
 // Definiciones de pines
 /*LCD*/
 #define RS 8
@@ -40,7 +39,6 @@
 #define INACTIVITY_THRESHOLD 10000
 
 // Variables globales
-LiquidCrystal lcd(RS, EN, D4, D5, D6, D7);
 Servo motor;
 int lectura = 0; // se mantine el valor de la última lectura y se inicializa apagado
 bool luzTrasera = true;
@@ -51,6 +49,68 @@ volatile bool irSignalDetected = false;
 
 // Temporizador de inactividad
 unsigned long lastActivityTime = millis();
+
+class LcdManager {
+public:
+    LcdManager(byte rs, byte en, byte d4, byte d5, byte d6, byte d7, byte backlightPin)
+        : _lcd(rs, en, d4, d5, d6, d7), _backlightPin(backlightPin), _internalBacklightState(true) {}
+
+    void begin() {
+        _lcd.begin(16, 2);
+        pinMode(_backlightPin, OUTPUT);
+        setBacklight(_internalBacklightState); // Inicializa el backlight con el estado interno
+    }
+
+    void print(const String& line1, const String& line2 = "") {
+        _lcd.clear();
+        _lcd.setCursor(0, 0);
+        _lcd.print(line1);
+        if (line2.length() > 0) {
+            _lcd.setCursor(0, 1);
+            _lcd.print(line2);
+        }
+    }
+
+    void setBacklight(bool on) {
+        _internalBacklightState = on;
+        digitalWrite(_backlightPin, _internalBacklightState ? HIGH : LOW);
+    }
+
+    bool getBacklightState() {
+        return _internalBacklightState;
+    }
+    
+    void display() {
+        _lcd.display();
+    }
+
+    void noDisplay() {
+        _lcd.noDisplay();
+    }
+
+    void clear() {
+        _lcd.clear();
+    }
+
+    void setCursor(byte col, byte row){
+        _lcd.setCursor(col, row);
+    }
+
+    void printToLcd(const String& message) { 
+        _lcd.print(message);
+    }
+
+    void printToLcd(int message) { 
+        _lcd.print(message);
+    }
+
+private:
+    LiquidCrystal _lcd;
+    byte _backlightPin;
+    bool _internalBacklightState; // Estado interno para el backlight
+};
+
+LcdManager myLcd(RS, EN, D4, D5, D6, D7, BACKLIGHT);
 
 void setup()
 {
@@ -64,12 +124,9 @@ void setup()
   Serial.begin(9600);
 
   // Inicializacion del LCD
-  lcd.begin(16, 2);
-  lcd.print("Controlador Aire");
-  lcd.setCursor(0, 1);
-  lcd.print("Iniciando...");
-  pinMode(BACKLIGHT, OUTPUT);
-  digitalWrite(BACKLIGHT, luzTrasera);
+  myLcd.begin();
+  myLcd.print("Controlador Aire", "Iniciando...");
+  
   // Inicializacion del mando infrarrojos
   IrReceiver.begin(IR_PIN);
   pinMode(IR_PIN, INPUT);
@@ -81,10 +138,7 @@ void setup()
   motor.detach();
   delay(1000);
 
-  lcd.clear();
-  lcd.print("Controlador Aire");
-  lcd.setCursor(0, 1);
-  lcd.print("Iniciado :)");
+  myLcd.print("Controlador Aire", "Iniciado :)");
   delay(1000);
 }
 
@@ -93,10 +147,7 @@ void loop()
 
   if (firstTime)
   {
-    lcd.clear();
-    lcd.print("Acciones:");
-    lcd.setCursor(0, 1);
-    lcd.print("on/off|temp|luz");
+    myLcd.print("Acciones:", "on/off|temp|luz");
     firstTime = false;
   }
 
@@ -104,13 +155,12 @@ void loop()
   if (haPasadoTiempoDesdeUltimaInvocacion(100, 0) && !motor.attached())
   {
     leerIR(false);
-    
   }
 
   if (millis() - lastActivityTime > INACTIVITY_THRESHOLD) {
     // Turn off components before sleeping
-    lcd.noDisplay();
-    digitalWrite(BACKLIGHT, LOW);
+    myLcd.noDisplay();
+    myLcd.setBacklight(false); // Usa el método de la clase
     
     // Turn off the built-in LED
     digitalWrite(LED_BUILTIN, LOW);
@@ -122,7 +172,6 @@ void loop()
     LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_ON);
     detachInterrupt(digitalPinToInterrupt(IR_PIN));
     
-    
     // Attempt to decode the IR signal
     if (irSignalDetected) {
       Serial.println("IR signal detected");
@@ -133,8 +182,8 @@ void loop()
         // Check if the received command matches a valid command
         if (isValidCommand(IrReceiver.decodedIRData.protocol)) {
           // Valid IR command detected, resume operation
-          lcd.display();
-          digitalWrite(BACKLIGHT, luzTrasera);
+          myLcd.display();
+          myLcd.setBacklight(luzTrasera); // Restaura el estado de luzTrasera
           lastActivityTime = millis(); // Reset inactivity timer
         } else {
           // Invalid IR command detected, go back to sleep
@@ -210,10 +259,7 @@ void manejarDispostivo(int comando)
   switch (comando)
   {
   case 69: // Encender y apagar
-    lcd.clear();
-    lcd.print("Accion:");
-    lcd.setCursor(0, 1);
-    lcd.print("ON/OFF - Aire AC");
+    myLcd.print("Accion:", "ON/OFF - Aire AC");
     motor.attach(SERVO_PIN);
     motor.write(0);
     delay(2000);
@@ -224,36 +270,26 @@ void manejarDispostivo(int comando)
     break;
   case 71: // Poner temporizador
   case 13:
-    lcd.clear();
-    lcd.print("Accion:");
-    lcd.setCursor(0, 1);
-    lcd.print("Temp. de ON/OFF");
+    myLcd.print("Accion:", "Temp. de ON/OFF");
     delay(1000);
     introducirTiempo();
     firstTime = true;
     break;
   case 22:
-    lcd.clear();
-    lcd.print("Accion:");
-    lcd.setCursor(0, 1);
-    lcd.print("ON/OFF - luz LCD");
+    myLcd.print("Accion:", "ON/OFF - luz LCD");
     delay(1000);
     luzTrasera = !luzTrasera;
-    digitalWrite(BACKLIGHT, luzTrasera);
+    myLcd.setBacklight(luzTrasera); // Usa el método de la clase
     firstTime = true;
     break;
   case RESETARD:
-    lcd.clear();
-    lcd.print("Reiniciando");
+    myLcd.print("Reiniciando");
     delay(1000);
     resetFunc();
     Serial.println("Arduino never run to this line");
     break;
   default:
-    lcd.clear();
-    lcd.print("Boton no");
-    lcd.setCursor(0, 1);
-    lcd.print("reconocido");
+    myLcd.print("Boton no", "reconocido");
     delay(1000);
     firstTime = true;
     break;
@@ -266,10 +302,7 @@ void introducirTiempo()
   int arrayValores[] = {5, 10, 15, 20, 25, 30, 35, 40, 45};
   int arrayPresets[] = {CINCO_MINUTOS, DIEZ_MINUTOS, QUINCE_MINUTOS, VEINTE_MINUTOS, VEINTICINCO_MINUTOS, TREINTA_MINUTOS, TREINTA_Y_CINCO_MINUTOS, CUARENTA_MINUTOS, CUARENTA_Y_CINCO_MINUTOS};
 
-  lcd.clear();
-  lcd.print("Introduce tiempo");
-  lcd.setCursor(0, 1);
-  lcd.print("1-9 -> 5-45(min)");
+  myLcd.print("Introduce tiempo", "1-9 -> 5-45(min)");
   static int tiempo = -1;
   delay(500);
 
@@ -302,14 +335,10 @@ void introducirTiempo()
       if (lecturaAux == 7)
       {
         tiempo = -1;
-        lcd.clear();
-        lcd.print("Temp. cancelado");
+        myLcd.print("Temp. cancelado");
         lectura = 0;
         delay(500);
-        lcd.clear();
-        lcd.print("Volviendo al");
-        lcd.setCursor(0, 1);
-        lcd.print("menu principal");
+        myLcd.print("Volviendo al", "menu principal");
         return;
       }
     }
@@ -334,19 +363,18 @@ void introducirTiempo()
         motor.write(255);
         delay(1000);
         motor.detach();
-        lcd.clear();
-        lcd.print("Temp. finalizado");
+        myLcd.print("Temp. finalizado");
         break;
       }
       else
       {
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("Temp. activado");
-        lcd.setCursor(0, 1);
-        lcd.print("T. rest.: ");
-        lcd.print(tiempo);
-        lcd.print("min");
+        myLcd.clear();
+        myLcd.setCursor(0, 0);
+        myLcd.printToLcd("Temp. activado");
+        myLcd.setCursor(0, 1);
+        myLcd.printToLcd("T. rest.: ");
+        myLcd.printToLcd(tiempo);
+        myLcd.printToLcd("min");
       }
 
       if (haPasadoTiempoDesdeUltimaInvocacion(1000, 0) && !motor.attached())
@@ -354,14 +382,10 @@ void introducirTiempo()
         // Escuchamos el IR para leer el comando de cancelar el temporizador
         if (leerIR(true) == 7) {
           tiempo = -1;
-          lcd.clear();
-          lcd.print("Temp. cancelado");
+          myLcd.print("Temp. cancelado");
           lectura = 0;
           delay(500);
-          lcd.clear();
-          lcd.print("Volviendo al");
-          lcd.setCursor(0, 1);
-          lcd.print("menu principal");
+          myLcd.print("Volviendo al", "menu principal");
           return;
         }
 
@@ -374,10 +398,7 @@ int mandoB(){
   // Calcula un multiplo de 5, por cada vez que se pulsa el boton (SEÑAL IR 25)
   int lecturaAux = 0;
   static int contador = 0;
-  lcd.clear();
-  lcd.print("Pulsa para");
-  lcd.setCursor(0, 1);
-  lcd.print("sumar 5 minutos");
+  myLcd.print("Pulsa para", "sumar 5 minutos");
   delay(500);
 
   // Lee hasta que se pulsa el boton de confirmar (SEÑAL IR 28) y envuleve el numero hasta 45 minutos
@@ -402,11 +423,12 @@ int mandoB(){
       {
         contador = 0;
       }
-      lcd.clear();
-      lcd.print("Temporizador de");
-      lcd.setCursor(0, 1);
-      lcd.print(contador);
-      lcd.print(" minutos");
+      myLcd.clear();
+      myLcd.setCursor(0,0);
+      myLcd.printToLcd("Temporizador de");
+      myLcd.setCursor(0,1);
+      myLcd.printToLcd(contador);
+      myLcd.printToLcd(" minutos");
     }
     delay(500);
   }
