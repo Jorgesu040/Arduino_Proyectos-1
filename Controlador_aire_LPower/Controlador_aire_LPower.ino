@@ -3,6 +3,7 @@
 #include <IRremote.hpp>
 #include <Servo.h>
 #include <LowPower.h>
+#include <avr/power.h>
 
 // Definiciones de pines
 /*LCD*/
@@ -112,8 +113,24 @@ private:
 
 LcdManager myLcd(RS, EN, D4, D5, D6, D7, BACKLIGHT);
 
+void powerSaveDelay(unsigned long ms) {
+  unsigned long start = millis();
+  while (millis() - start < ms) {
+    LowPower.idle(SLEEP_15MS, ADC_OFF, TIMER2_OFF, TIMER1_OFF, TIMER0_ON, SPI_OFF, USART0_ON, TWI_OFF);
+  }
+}
+
+// Delay normal para cuando esperamos activamente entrada IR
+void activeDelay(unsigned long ms) {
+  delay(ms);
+}
+
 void setup()
 {
+
+  // Deshabilitar periféricos innecesarios para ahorrar energía
+  power_spi_disable();     // SPI no se usa
+  power_twi_disable();     // I2C/TWI no se usa
 
   // Inicializacion de los pines
   pinMode(LED_BUILTIN, OUTPUT);
@@ -130,16 +147,15 @@ void setup()
   // Inicializacion del mando infrarrojos
   IrReceiver.begin(IR_PIN);
   pinMode(IR_PIN, INPUT);
-
   // Inicializacion del servo
   motor.attach(SERVO_PIN);
   motor.write(255);
-  delay(1000);
+  powerSaveDelay(1000);
   motor.detach();
-  delay(1000);
+  powerSaveDelay(1000);
 
   myLcd.print("Controlador Aire", "Iniciado :)");
-  delay(1000);
+  powerSaveDelay(1000);
 }
 
 void loop()
@@ -173,12 +189,10 @@ void loop()
     detachInterrupt(digitalPinToInterrupt(IR_PIN));
     
     // Attempt to decode the IR signal
-    if (irSignalDetected) {
-      Serial.println("IR signal detected");
-      digitalWrite(LED_BUILTIN, HIGH);
-      delay(100); // Wait for the IR signal to be fully received
+    if (irSignalDetected) {      Serial.println("IR signal detected");      digitalWrite(LED_BUILTIN, HIGH);
+      activeDelay(100); // Wait for the IR signal to be fully received
       if (IrReceiver.decode() > 0) {
-        delay (100); // Wait for the IR signal to be fully received
+        activeDelay(100); // Wait for the IR signal to be fully received
         // Check if the received command matches a valid command
         if (isValidCommand(IrReceiver.decodedIRData.protocol)) {
           // Valid IR command detected, resume operation
@@ -201,7 +215,7 @@ void loop()
 void resetFunc()
 {
   digitalWrite(HARWARE_RESET, LOW);
-  delay(1000);
+  powerSaveDelay(1000);
   digitalWrite(HARWARE_RESET, HIGH);
 
 }
@@ -257,40 +271,39 @@ int leerIR(bool externo)
 void manejarDispostivo(int comando)
 {
   switch (comando)
-  {
-  case 69: // Encender y apagar
+  {  case 69: // Encender y apagar
     myLcd.print("Accion:", "ON/OFF - Aire AC");
     motor.attach(SERVO_PIN);
     motor.write(0);
-    delay(2000);
+    powerSaveDelay(2000);
     motor.write(255);
-    delay(1000);
+    powerSaveDelay(1000);
     motor.detach();
     firstTime = true;
     break;
   case 71: // Poner temporizador
   case 13:
     myLcd.print("Accion:", "Temp. de ON/OFF");
-    delay(1000);
+    powerSaveDelay(1000);
     introducirTiempo();
     firstTime = true;
     break;
   case 22:
     myLcd.print("Accion:", "ON/OFF - luz LCD");
-    delay(1000);
+    powerSaveDelay(1000);
     luzTrasera = !luzTrasera;
     myLcd.setBacklight(luzTrasera); // Usa el método de la clase
     firstTime = true;
     break;
   case RESETARD:
     myLcd.print("Reiniciando");
-    delay(1000);
+    powerSaveDelay(1000);
     resetFunc();
     Serial.println("Arduino never run to this line");
     break;
   default:
     myLcd.print("Boton no", "reconocido");
-    delay(1000);
+    powerSaveDelay(1000);
     firstTime = true;
     break;
   }
@@ -300,11 +313,9 @@ void introducirTiempo()
 {
 
   int arrayValores[] = {5, 10, 15, 20, 25, 30, 35, 40, 45};
-  int arrayPresets[] = {CINCO_MINUTOS, DIEZ_MINUTOS, QUINCE_MINUTOS, VEINTE_MINUTOS, VEINTICINCO_MINUTOS, TREINTA_MINUTOS, TREINTA_Y_CINCO_MINUTOS, CUARENTA_MINUTOS, CUARENTA_Y_CINCO_MINUTOS};
-
-  myLcd.print("Introduce tiempo", "1-9 -> 5-45(min)");
+  int arrayPresets[] = {CINCO_MINUTOS, DIEZ_MINUTOS, QUINCE_MINUTOS, VEINTE_MINUTOS, VEINTICINCO_MINUTOS, TREINTA_MINUTOS, TREINTA_Y_CINCO_MINUTOS, CUARENTA_MINUTOS, CUARENTA_Y_CINCO_MINUTOS};  myLcd.print("Introduce tiempo", "1-9 -> 5-45(min)");
   static int tiempo = -1;
-  delay(500);
+  activeDelay(500);
 
   while (tiempo == -1)
   {
@@ -328,16 +339,14 @@ void introducirTiempo()
         }
       }
 
-      if (lecturaAux == 25){
+      if (lecturaAux == 25) {
         tiempo = mandoB();
       }
-
-      if (lecturaAux == 7)
-      {
+      if (lecturaAux == 7) {
         tiempo = -1;
         myLcd.print("Temp. cancelado");
         lectura = 0;
-        delay(500);
+        activeDelay(500);
         myLcd.print("Volviendo al", "menu principal");
         return;
       }
@@ -356,12 +365,11 @@ void introducirTiempo()
     if (haPasadoTiempoDesdeUltimaInvocacion(1000, 3))
     {
       if (tiempo == 0)
-      {
-        motor.attach(SERVO_PIN);
+      {        motor.attach(SERVO_PIN);
         motor.write(0);
-        delay(2000);
+        powerSaveDelay(2000);
         motor.write(255);
-        delay(1000);
+        powerSaveDelay(1000);
         motor.detach();
         myLcd.print("Temp. finalizado");
         break;
@@ -384,7 +392,7 @@ void introducirTiempo()
           tiempo = -1;
           myLcd.print("Temp. cancelado");
           lectura = 0;
-          delay(500);
+          activeDelay(500);
           myLcd.print("Volviendo al", "menu principal");
           return;
         }
@@ -396,10 +404,9 @@ void introducirTiempo()
 
 int mandoB(){
   // Calcula un multiplo de 5, por cada vez que se pulsa el boton (SEÑAL IR 25)
-  int lecturaAux = 0;
-  static int contador = 0;
+  int lecturaAux = 0;  static int contador = 0;
   myLcd.print("Pulsa para", "sumar 5 minutos");
-  delay(500);
+  activeDelay(500);
 
   // Lee hasta que se pulsa el boton de confirmar (SEÑAL IR 28) y envuleve el numero hasta 45 minutos
   // Una vez se llega a 45 minutos, se resetea el contador
@@ -426,11 +433,10 @@ int mandoB(){
       myLcd.clear();
       myLcd.setCursor(0,0);
       myLcd.printToLcd("Temporizador de");
-      myLcd.setCursor(0,1);
-      myLcd.printToLcd(contador);
+      myLcd.setCursor(0,1);      myLcd.printToLcd(contador);
       myLcd.printToLcd(" minutos");
     }
-    delay(500);
+    activeDelay(500);
   }
 
   return contador;
